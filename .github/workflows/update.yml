@@ -1,0 +1,55 @@
+# Régénère data.json avec le dernier run ECMWF + GFS et publie le site sur GitHub Pages.
+# ECMWF 00/12 UTC est complet vers +8 h, GFS vers +5 h : passages à 08:40 et 20:40 UTC, plus un rattrapage.
+name: Mise à jour météo
+
+on:
+  schedule:
+    - cron: "40 8 * * *"
+    - cron: "40 20 * * *"
+    - cron: "20 2 * * *"
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.txt
+      - run: pip install -r requirements.txt
+      - name: Télécharger ECMWF et GFS
+        run: python build_data.py --out site/data.json
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+      - id: deploy
+        uses: actions/deploy-pages@v4
+      # GitHub suspend les tâches planifiées après 60 jours sans activité : un petit commit mensuel l'évite.
+      - name: Garder le dépôt actif
+        if: github.event_name == 'schedule'
+        run: |
+          if [ "$(date -u +%d)" = "01" ] && [ "$(date -u +%H)" = "08" ]; then
+            date -u +%Y-%m-%dT%H:%MZ > .keepalive
+            git config user.name "github-actions[bot]"
+            git config user.email "41898283+github-actions[bot]@users.noreply.github.com"
+            git add .keepalive && git commit -m "keepalive" && git push || true
+          fi

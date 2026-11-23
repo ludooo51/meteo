@@ -1,0 +1,6 @@
+*.grib2
+*.tmp
+site/data.json
+__pycache__/
+.impeccable/
+.claude/
