@@ -52,6 +52,16 @@ canvas#chart{display:block;width:100%;height:170px}
 .note{font-size:12px;color:var(--tx2)}
 #err{color:var(--err);font-size:14px;display:none}
 h2{font-size:15px;font-weight:600;margin:0 0 6px}
+.days{display:flex;flex-direction:column;margin:4px 0 12px;border-top:1px solid var(--bd)}
+.day{display:grid;grid-template-columns:3.6em 2.2em 1fr auto;align-items:center;gap:8px;padding:7px 2px;border:0;border-bottom:1px solid var(--bd);background:none;color:var(--tx);font:inherit;text-align:left;cursor:pointer}
+.day.on{background:var(--chip)}
+.day .d{font-weight:600;font-size:14px;line-height:1.2}
+.day .d small{display:block;font-weight:400;color:var(--tx2);font-size:12px}
+.day .i{font-size:24px;line-height:1}
+.day .t{font-size:14px;line-height:1.3}
+.day .t small{display:block;color:var(--tx2);font-size:12px}
+.day .x{font-size:12.5px;color:var(--tx2);text-align:right;line-height:1.35;white-space:nowrap}
+.sym{font-size:13px;color:var(--tx2);display:block;margin-top:2px}
 #reload{border:1px solid var(--bd);background:var(--chip);color:var(--tx);border-radius:9px;min-height:36px;padding:0 10px;font:inherit;font-size:13px;cursor:pointer}
 </style>
 </head>
@@ -89,6 +99,8 @@ h2{font-size:15px;font-weight:600;margin:0 0 6px}
   <h2 id="ptitle">Point choisi</h2>
   <div class="scroll" id="cities" style="margin-bottom:8px"></div>
   <div class="vals" id="vals"></div>
+  <h2 style="margin-top:10px">Jour par jour <small class="note" style="font-weight:400">· moyenne ECMWF et GFS · touche un jour pour l'afficher</small></h2>
+  <div class="days" id="days"></div>
   <canvas id="chart"></canvas>
   <p class="note" style="margin:6px 0 0">Évolution sur 10 jours au point choisi, avec les deux modèles. Trait vertical : échéance affichée.</p>
 </div>
@@ -105,22 +117,26 @@ var CITIES=[
  {n:"Londres",lat:51.51,lon:-0.13,label:true},{n:"Madrid",lat:40.42,lon:-3.70,label:true},{n:"Berlin",lat:52.52,lon:13.40,label:true},{n:"Rome",lat:41.90,lon:12.50,label:true}
 ];
 var VARS={
+ sky:{label:"Temps (soleil, nuages, pluie)",unit:"%",min:0,max:100,dec:0,cm:"cloud",dmax:50,key:"cloud"},
  t2m:{label:"Température 2 m",unit:"°C",min:-20,max:30,dec:1,cm:"temp",dmax:8,deg:true},
+ pr:{label:"Pluie",unit:"mm/h",min:0,max:6,dec:1,cm:"rain",dmax:3},
+ wind:{label:"Vent 10 m",unit:"m/s",min:0,max:28,dec:1,cm:"wind",dmax:8},
+ cloud:{label:"Nuages",unit:"%",min:0,max:100,dec:0,cm:"cloud",dmax:50},
  t850:{label:"Température 850 hPa",unit:"°C",min:-24,max:24,dec:1,cm:"temp",dmax:10,deg:true},
- wind:{label:"Vent 10 m",unit:"km/h",min:0,max:100,dec:0,cm:"wind",dmax:30},
- msl:{label:"Pression",unit:"hPa",min:975,max:1045,dec:0,cm:"pres",dmax:12},
- pr:{label:"Pluie",unit:"mm/h",min:0,max:6,dec:1,cm:"rain",dmax:3}
+ msl:{label:"Pression",unit:"hPa",min:975,max:1045,dec:0,cm:"pres",dmax:12}
 };
+function key(v){return VARS[v].key||v;}
 var CM={
  temp:[[0,"#6a1b9a"],[.14,"#283593"],[.28,"#1e88e5"],[.38,"#90caf9"],[.42,"#7fc9a0"],[.5,"#43a047"],[.6,"#cddc39"],[.72,"#fdd835"],[.86,"#fb8c00"],[1,"#e53935"]],
  wind:[[0,"#f4f1e8"],[.15,"#b8e0c8"],[.3,"#5dbb8a"],[.5,"#e8d44d"],[.7,"#f08a3c"],[.85,"#d63a3a"],[1,"#7b1fa2"]],
  pres:[[0,"#4a2a8a"],[.3,"#3b7bd0"],[.5,"#f3f1ea"],[.7,"#f0a050"],[1,"#b02a2a"]],
  rain:[[0,"#f4f2ea"],[.03,"#e3eefb"],[.15,"#9ec7f0"],[.4,"#3b86d8"],[.7,"#6a4bc4"],[1,"#a8208f"]],
+ cloud:[[0,"#3f86d0"],[.2,"#7eaedc"],[.5,"#b9c6d3"],[.8,"#dadcde"],[1,"#f3f3f1"]],
  diff:[[0,"#08306b"],[.25,"#4a90d0"],[.5,"#f4f2ea"],[.75,"#e8805a"],[1,"#8f1b1b"]]
 };
 var LON0=-15,LAT0=60,SPAN_LON=40,SPAN_LAT=24,MAXZ=6;
 var saved={};try{saved=JSON.parse(localStorage.getItem("meteo")||"{}");}catch(e){}
-var state={model:"ecmwf",v:VARS[saved.v]?saved.v:"t2m",s:0,pt:saved.pt&&isFinite(saved.pt.lat)?saved.pt:HOME,playing:false,vals:true};
+var state={model:"ecmwf",v:VARS[saved.v]?saved.v:"sky",s:0,pt:saved.pt&&isFinite(saved.pt.lat)?saved.pt:HOME,playing:false,vals:true};
 var V={z:1,lon0:LON0,lat0:LAT0,spanLon:SPAN_LON,spanLat:SPAN_LAT};
 var COAST=null,F={},NX=0,NY=0,N=0,NS=0,RUN=0,BUILT=0,MIDN=[];
 var STEPS=[],LUT={},W=0,H=0,CSSW=360,timer=null,SPD=[1800,900,450],SPL=["0,5×","1×","2×"],sp=1,raf=0,ready=false;
@@ -149,7 +165,7 @@ function decode(b64,scale){
   return f;
 }
 function fmt(x,dec){return x.toLocaleString("fr-FR",{minimumFractionDigits:dec,maximumFractionDigits:dec});}
-function sgn(x,dec){return (x>0.0001?"+":"")+fmt(x,dec);}
+function sgn(x,dec){if(Math.abs(x)<0.5/Math.pow(10,dec))x=0;return (x>0.0001?"+":"")+fmt(x,dec);}
 
 var fRun=new Intl.DateTimeFormat("fr-FR",{timeZone:"Europe/Paris",weekday:"short",day:"numeric",month:"short",hour:"2-digit",minute:"2-digit"});
 var fHour=new Intl.DateTimeFormat("fr-FR",{timeZone:"Europe/Paris",hour:"numeric",hourCycle:"h23"});
@@ -170,8 +186,9 @@ function load(){
       F[m]={};
       Object.keys(D.data[m]).forEach(function(k){F[m][k]=decode(D.data[m][k],D.scale[k]);});
       var w=new Float32Array(F[m].u10.length);
-      for(var i=0;i<w.length;i++)w[i]=Math.hypot(F[m].u10[i],F[m].v10[i])*3.6;
+      for(var i=0;i<w.length;i++)w[i]=Math.hypot(F[m].u10[i],F[m].v10[i]);  // m/s
       F[m].wind=w;
+      if(!F[m].cloud)F[m].cloud=new Float32Array(w.length);  // ancienne prévision sans nuages
     });
     MIDN=[];  // minuits heure de France (gère l'heure d'été)
     for(var h=0;h<=STEPS[NS-1];h++){if(parseInt(fHour.format(new Date(RUN+h*3600000)),10)===0)MIDN.push(h);}
@@ -220,17 +237,42 @@ function scaleFor(){
   if(state.model==="diff")return{min:-v.dmax,max:v.dmax,lut:LUT.diff,stops:CM.diff};
   return{min:v.min,max:v.max,lut:LUT[v.cm],stops:CM[v.cm]};
 }
+// --- temps sensible : soleil / nuages / pluie / neige ---------------------------------
+function sunUp(ts,lat,lon){  // hauteur du soleil > -0,83° (formules approchées, précises à quelques minutes)
+  var R=Math.PI/180,d=ts/864e5-10957.5,g=(357.529+.98560028*d)*R,q=280.459+.98564736*d;
+  var L=(q+1.915*Math.sin(g)+.02*Math.sin(2*g))*R,e=(23.439-3.6e-7*d)*R;
+  var dec=Math.asin(Math.sin(e)*Math.sin(L)),ra=Math.atan2(Math.cos(e)*Math.sin(L),Math.cos(L));
+  var ha=((280.46061837+360.98564736629*d+lon)*R-ra);
+  return Math.sin(lat*R)*Math.sin(dec)+Math.cos(lat*R)*Math.cos(dec)*Math.cos(ha)>-0.0145;
+}
+function sym(t,c,r,day){  // t °C, c % nuages, r mm/h
+  if(r>=0.1){
+    if(t<=1)return["❄️","Neige"];
+    if(r>=2)return["🌧️","Pluie forte"];
+    return c<70?["🌦️","Averses"]:["🌧️","Pluie"];
+  }
+  if(c<20)return day?["☀️","Ensoleillé"]:["🌙","Ciel clair"];
+  if(c<45)return day?["🌤️","Peu nuageux"]:["🌙","Peu nuageux"];
+  if(c<75)return day?["⛅","Éclaircies"]:["☁️","Nuageux"];
+  return["☁️","Couvert"];
+}
+function symAt(m,s,lon,lat){
+  return sym(samp(F[m].t2m,s,lon,lat),samp(F[m].cloud,s,lon,lat),samp(F[m].pr,s,lon,lat),sunUp(RUN+STEPS[s]*3600000,lat,lon));
+}
+function dirName(u,v){var a=(Math.atan2(-u,-v)*180/Math.PI+360)%360;return["N","NE","E","SE","S","SO","O","NO"][Math.round(a/45)%8];}
+
 function valueAt(lon,lat,s){
-  var k=state.v;
+  var k=key(state.v);
   if(state.model==="diff")return samp(F.ecmwf[k],s,lon,lat)-samp(F.gfs[k],s,lon,lat);
   return samp(F[state.model][k],s,lon,lat);
 }
-function render(){if(!ready)return;renderMap();legend(scaleFor());when();values();drawChart();}
+function render(){if(!ready)return;renderMap();legend(scaleFor());when();values();days();drawChart();}
 
 function renderMap(){
   if(!W||!NX)return;
   var sc=scaleFor(),img=ctx.createImageData(W,H),d=img.data,o=state.s*N,diff=state.model==="diff";
-  var A=diff?F.ecmwf[state.v]:F[state.model][state.v],B=diff?F.gfs[state.v]:null;
+  var k=key(state.v),A=diff?F.ecmwf[k]:F[state.model][k],B=diff?F.gfs[k]:null;
+  var P=state.v==="sky"&&!diff?F[state.model].pr:null,rl=LUT.rain;  // pluie superposée aux nuages
   var ci=new Int32Array(W),cf=new Float32Array(W),ri=new Int32Array(H),rf=new Float32Array(H),x,y,f,i0;
   for(x=0;x<W;x++){f=((V.lon0+(x+.5)/W*V.spanLon)-LON0)/0.5;f=f<0?0:f>NX-1.001?NX-1.001:f;i0=Math.floor(f);ci[x]=i0;cf[x]=f-i0;}
   for(y=0;y<H;y++){f=(LAT0-(V.lat0-(y+.5)/H*V.spanLat))/0.5;f=f<0?0:f>NY-1.001?NY-1.001:f;i0=Math.floor(f);ri[y]=i0*NX;rf[y]=f-i0;}
@@ -243,6 +285,13 @@ function renderMap(){
       if(diff)val-=(B[i]*(1-fx)+B[i+1]*fx)*(1-fy)+(B[i+NX]*(1-fx)+B[i+NX+1]*fx)*fy;
       var t=(val-sc.min)/span*255;t=t<0?0:t>255?255:t|0;
       d[p]=lut[t*3];d[p+1]=lut[t*3+1];d[p+2]=lut[t*3+2];d[p+3]=255;
+      if(P){
+        var rr=(P[i]*(1-fx)+P[i+1]*fx)*(1-fy)+(P[i+NX]*(1-fx)+P[i+NX+1]*fx)*fy;
+        if(rr>=0.1){
+          var ti=Math.min(255,(40+rr/6*215)|0),al=Math.min(.9,.55+rr/5);
+          d[p]+=(rl[ti*3]-d[p])*al;d[p+1]+=(rl[ti*3+1]-d[p+1])*al;d[p+2]+=(rl[ti*3+2]-d[p+2])*al;
+        }
+      }
     }
   }
   ctx.putImageData(img,0,0);
@@ -297,14 +346,18 @@ function overlay(){
       for(var q=0;q<cpos.length;q++){if(Math.abs(cpos[q].x-x)<fs*3.2&&Math.abs(cpos[q].y-y)<fs*1.6){near=true;break;}}
       var ly=y;
       if(wind){
-        var uu=samp(F[state.model].u10,state.s,lon,lat),vv=samp(F[state.model].v10,state.s,lon,lat),hp=Math.hypot(uu,vv),sp2=hp*3.6;
-        if(sp2>=4){
-          var L=Math.max(.25,Math.min(1,sp2/70))*arrowMax,ux=uu/hp,uy=-vv/hp,x1=x-ux*L/2,y1=y-uy*L/2,x2=x+ux*L/2,y2=y+uy*L/2,hs=Math.max(3.5,L*.3);
+        var uu=samp(F[state.model].u10,state.s,lon,lat),vv=samp(F[state.model].v10,state.s,lon,lat),hp=Math.hypot(uu,vv);
+        if(hp>=1){
+          var L=Math.max(.25,Math.min(1,hp/20))*arrowMax,ux=uu/hp,uy=-vv/hp,x1=x-ux*L/2,y1=y-uy*L/2,x2=x+ux*L/2,y2=y+uy*L/2,hs=Math.max(3.5,L*.3);
           ctx.strokeStyle="rgba(20,20,20,.8)";ctx.fillStyle="rgba(20,20,20,.8)";ctx.lineWidth=Math.max(1.2,u*1.2);
           ctx.beginPath();ctx.moveTo(x1,y1);ctx.lineTo(x2,y2);ctx.stroke();
           ctx.beginPath();ctx.moveTo(x2,y2);ctx.lineTo(x2-ux*hs-uy*hs*.5,y2-uy*hs+ux*hs*.5);ctx.lineTo(x2-ux*hs+uy*hs*.5,y2-uy*hs-ux*hs*.5);ctx.closePath();ctx.fill();
         }
         ly=y+Math.max(arrowMax*.5,fs*.6)+fs*.55;
+      }
+      if(state.vals&&!near&&state.v==="sky"&&state.model!=="diff"){
+        ctx.font=(fs*1.35)+"px system-ui,sans-serif";ctx.fillText(symAt(state.model,state.s,lon,lat)[0],x,y);
+        continue;
       }
       if(state.vals&&!near){
         var val=valueAt(lon,lat,state.s);
@@ -317,7 +370,7 @@ function overlay(){
     ctx.fillStyle="#fff";ctx.strokeStyle="#111";ctx.lineWidth=1.3;
     ctx.beginPath();ctx.arc(o.x,o.y,Math.max(2.5,u*2.6),0,6.3);ctx.fill();ctx.stroke();
     var txt=o.c.n;
-    if(state.vals)txt+=" "+fmtVal(valueAt(o.c.lon,o.c.lat,state.s),big);
+    if(state.vals)txt+=" "+(state.v==="sky"&&state.model!=="diff"?symAt(state.model,state.s,o.c.lon,o.c.lat)[0]:fmtVal(valueAt(o.c.lon,o.c.lat,state.s),big));
     ctx.font="600 "+fs+"px system-ui,sans-serif";
     var tw=ctx.measureText(txt).width;
     ctx.textAlign="left";
@@ -342,7 +395,7 @@ function legend(sc){
     document.getElementById("l1").textContent=sgn(sc.max,0)+" "+v.unit+" (ECMWF plus haut)";
   }else{
     document.getElementById("l0").textContent=fmt(sc.min,0)+" "+v.unit;
-    document.getElementById("lm").textContent=v.label;
+    document.getElementById("lm").textContent=state.v==="sky"?"bleu : ciel clair · blanc : couvert · violet : pluie":v.label;
     document.getElementById("l1").textContent=fmt(sc.max,0)+" "+v.unit;
   }
 }
@@ -356,16 +409,57 @@ function when(){
 }
 
 function pointVals(s){
-  var v=state.v;
+  var v=key(state.v);
   return{e:samp(F.ecmwf[v],s,state.pt.lon,state.pt.lat),g:samp(F.gfs[v],s,state.pt.lon,state.pt.lat)};
 }
 function values(){
-  var v=VARS[state.v],p=pointVals(state.s),dec=v.dec;
-  document.getElementById("ptitle").textContent=state.pt.n+" · "+v.label;
+  var v=VARS[state.v],p=pointVals(state.s),dec=v.dec,pt=state.pt,s=state.s;
+  document.getElementById("ptitle").textContent=pt.n+" · "+(state.v==="sky"?"Nuages":v.label);
+  function extra(m){  // symbole du temps + vent pour chaque modèle
+    var y=symAt(m,s,pt.lon,pt.lat),u=samp(F[m].u10,s,pt.lon,pt.lat),w=samp(F[m].v10,s,pt.lon,pt.lat);
+    return '<span class="sym">'+y[0]+' '+y[1]+'<br>💨 '+fmt(Math.hypot(u,w),0)+' m/s '+dirName(u,w)+'</span>';
+  }
   document.getElementById("vals").innerHTML=
-   '<div class="val"><span><i class="dot" style="background:var(--ac)"></i>ECMWF</span><b>'+fmt(p.e,dec)+' <small>'+v.unit+'</small></b></div>'+
-   '<div class="val"><span><i class="dot" style="background:var(--or)"></i>GFS</span><b>'+fmt(p.g,dec)+' <small>'+v.unit+'</small></b></div>'+
+   '<div class="val"><span><i class="dot" style="background:var(--ac)"></i>ECMWF</span><b>'+fmt(p.e,dec)+' <small>'+v.unit+'</small></b>'+extra("ecmwf")+'</div>'+
+   '<div class="val"><span><i class="dot" style="background:var(--or)"></i>GFS</span><b>'+fmt(p.g,dec)+' <small>'+v.unit+'</small></b>'+extra("gfs")+'</div>'+
    '<div class="val"><span>Écart</span><b>'+sgn(p.e-p.g,dec)+' <small>'+v.unit+'</small></b></div>';
+}
+
+// Jour par jour au point choisi : moyenne des deux modèles.
+var fDay=new Intl.DateTimeFormat("fr-FR",{timeZone:"Europe/Paris",weekday:"short",day:"numeric"});
+function days(){
+  var pt=state.pt,el=document.getElementById("days"),html="",bounds=[-1].concat(MIDN,[STEPS[NS-1]]);
+  var nowH=(Date.now()-RUN)/3600000;
+  for(var b=0;b<bounds.length-1;b++){
+    var h0=bounds[b],h1=bounds[b+1];
+    if(h1<=nowH-1)continue;  // jour déjà passé
+    var acc={tmin:1e9,tmax:-1e9,rain:0,wmax:0,wu:0,wv:0,cl:0,nc:0,mid:-1},n=0;
+    ["ecmwf","gfs"].forEach(function(m){
+      for(var s=0;s<NS;s++){
+        var h=STEPS[s];if(h<=h0||h>h1)continue;
+        var t=samp(F[m].t2m,s,pt.lon,pt.lat);acc.tmin=Math.min(acc.tmin,t);acc.tmax=Math.max(acc.tmax,t);
+        if(s>0)acc.rain+=samp(F[m].pr,s,pt.lon,pt.lat)*(h-STEPS[s-1])/2;
+        var u=samp(F[m].u10,s,pt.lon,pt.lat),v=samp(F[m].v10,s,pt.lon,pt.lat),w=Math.hypot(u,v);
+        if(w>acc.wmax){acc.wmax=w;acc.wu=u;acc.wv=v;}
+        if(sunUp(RUN+h*3600000,pt.lat,pt.lon)){acc.cl+=samp(F[m].cloud,s,pt.lon,pt.lat);acc.nc++;}
+        if(acc.mid<0||Math.abs(h-(h0+13))<Math.abs(STEPS[acc.mid]-(h0+13)))acc.mid=s;
+        n++;
+      }
+    });
+    if(!n)continue;
+    if(h1-h0<12&&b===bounds.length-2)continue;  // dernier jour trop incomplet
+    var cl=acc.nc?acc.cl/acc.nc:50,r=acc.rain,y;
+    if(r>=1)y=(acc.tmax+acc.tmin)/2<=1?["❄️","Neige"]:r>=8?["🌧️","Pluie forte"]:cl<65?["🌦️","Averses"]:["🌧️","Pluie"];
+    else if(r>=0.2)y=cl<80?["🌦️","Quelques gouttes"]:["🌧️","Faible pluie"];
+    else y=cl<20?["☀️","Ensoleillé"]:cl<45?["🌤️","Peu nuageux"]:cl<75?["⛅","Éclaircies"]:["☁️","Couvert"];
+    var label=h0<nowH&&h1>nowH?"Auj.":fDay.format(new Date(RUN+(h0+12)*3600000));
+    var on=STEPS[state.s]>h0&&STEPS[state.s]<=h1?" on":"";
+    html+='<button class="day'+on+'" data-s="'+acc.mid+'"><span class="d">'+label+'</span><span class="i" aria-hidden="true">'+y[0]+'</span>'+
+      '<span class="t">'+fmt(acc.tmin,0)+'° / <b>'+fmt(acc.tmax,0)+'°</b><small>'+y[1]+'</small></span>'+
+      '<span class="x">💧 '+(r<0.1?"0":fmt(r,1))+' mm<br>💨 '+fmt(acc.wmax,0)+' m/s '+dirName(acc.wu,acc.wv)+'</span></button>';
+  }
+  el.innerHTML=html;
+  Array.prototype.forEach.call(el.querySelectorAll(".day"),function(d){d.onclick=function(){setStep(+d.dataset.s);};});
 }
 
 function cssVar(n){return getComputedStyle(document.documentElement).getPropertyValue(n).trim();}
@@ -375,13 +469,13 @@ function drawChart(){
   var c=chartCv.getContext("2d");c.setTransform(dpr,0,0,dpr,0,0);c.clearRect(0,0,cw,ch);
   var v=state.v,E=[],G=[],mn=1e9,mx=-1e9,s;
   for(s=0;s<NS;s++){var p=pointVals(s);E.push(p.e);G.push(p.g);mn=Math.min(mn,p.e,p.g);mx=Math.max(mx,p.e,p.g);}
-  if(v==="pr"){mn=0;mx=Math.max(mx,1);}else{var pad=Math.max((mx-mn)*.12,1);mn-=pad;mx+=pad;}
+  if(v==="pr"){mn=0;mx=Math.max(mx,1);}else if(v==="sky"||v==="cloud"){mn=0;mx=100;}else{var pad=Math.max((mx-mn)*.12,1);mn-=pad;mx+=pad;}
   var L=38,R=8,T=8,B=24,pw=cw-L-R,ph=ch-T-B,end=STEPS[NS-1];
   function X(h){return L+h/end*pw;}
   function Y(val){return T+(1-(val-mn)/(mx-mn))*ph;}
   var tx2=cssVar("--tx2"),bd=cssVar("--bd");
   c.font="11px system-ui,sans-serif";c.fillStyle=tx2;c.strokeStyle=bd;c.lineWidth=1;c.textBaseline="middle";c.textAlign="right";
-  for(var g=0;g<=3;g++){var val=mn+(mx-mn)*g/3,y=Y(val);c.beginPath();c.moveTo(L,y);c.lineTo(L+pw,y);c.stroke();c.fillText(fmt(val,v==="msl"||v==="wind"?0:1),L-5,y);}
+  for(var g=0;g<=3;g++){var val=mn+(mx-mn)*g/3,y=Y(val);c.beginPath();c.moveTo(L,y);c.lineTo(L+pw,y);c.stroke();c.fillText(fmt(val,v==="pr"||v==="t2m"||v==="t850"?1:0),L-5,y);}
   c.textAlign="center";c.textBaseline="top";
   var wdN=new Intl.DateTimeFormat("fr-FR",{timeZone:"Europe/Paris",weekday:"narrow"}),wdD=new Intl.DateTimeFormat("fr-FR",{timeZone:"Europe/Paris",day:"numeric"});
   var nowH=(Date.now()-RUN)/3600000;

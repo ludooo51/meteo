@@ -50,7 +50,7 @@ DATE, HH = run.strftime("%Y%m%d"), run.hour
 log("run choisi :", DATE, "%02d UTC" % HH, "| ECMWF le plus récent :", ec_latest)
 
 out = {m: {k: np.zeros((len(STEPS), len(LATS), len(LONS)), dtype=np.float32)
-           for k in ["t2m", "t850", "u10", "v10", "msl", "pr"]} for m in ("ecmwf", "gfs")}
+           for k in ["t2m", "t850", "u10", "v10", "msl", "pr", "cloud"]} for m in ("ecmwf", "gfs")}
 
 
 def sample(vals, cols):
@@ -59,7 +59,7 @@ def sample(vals, cols):
 
 # --- ECMWF ------------------------------------------------------------------
 c.retrieve(date=DATE, time=HH, type="fc", stream="oper", step=STEPS,
-           param=["2t", "10u", "10v", "msl", "tp"], target="ec_sfc.grib2")
+           param=["2t", "10u", "10v", "msl", "tp", "tcc"], target="ec_sfc.grib2")
 c.retrieve(date=DATE, time=HH, type="fc", stream="oper", step=STEPS,
            param="t", levtype="pl", levelist=850, target="ec_pl.grib2")
 log("ECMWF téléchargé")
@@ -80,6 +80,7 @@ for f in ["ec_sfc.grib2", "ec_pl.grib2"]:
                 elif sn == "10v": out["ecmwf"]["v10"][i] = v
                 elif sn == "msl": out["ecmwf"]["msl"][i] = v / 100
                 elif sn == "t" and lev == 850: out["ecmwf"]["t850"][i] = v - 273.15
+                elif sn == "tcc": out["ecmwf"]["cloud"][i] = v
                 elif sn == "tp": tp[st] = v
             eccodes.codes_release(g)
 for f in ["ec_sfc.grib2", "ec_pl.grib2"]:
@@ -97,7 +98,7 @@ log("ECMWF lu ; échéances de pluie :", len(tp))
 
 # --- GFS (téléchargement partiel via .idx + Range) ---------------------------
 PAT = {"t2m": ":TMP:2 m above ground:", "u10": ":UGRD:10 m above ground:", "v10": ":VGRD:10 m above ground:",
-       "msl": ":PRMSL:mean sea level:", "t850": ":TMP:850 mb:", "pr": ":PRATE:surface:"}
+       "msl": ":PRMSL:mean sea level:", "t850": ":TMP:850 mb:", "pr": ":PRATE:surface:", "cloud": ":TCDC:entire atmosphere:"}
 
 
 def fetch(url, headers=None, tries=4):
@@ -130,10 +131,16 @@ with cf.ThreadPoolExecutor(8) as ex:
         i = STEPS.index(st)
         for k, v in res.items():
             out["gfs"][k][i] = v - 273.15 if k in ("t2m", "t850") else v / 100 if k == "msl" else v * 3600 if k == "pr" else v
+for m in out:  # nébulosité en % (ECMWF peut être en fraction 0-1) ; GFS peut manquer à +0
+    cl = out[m]["cloud"]
+    if cl.max() <= 1.01:
+        cl *= 100
+    if len(STEPS) > 1 and not cl[0].any():
+        cl[0] = cl[1]
 log("GFS lu")
 
 # --- écriture ---------------------------------------------------------------
-SC = {"t2m": 100, "t850": 100, "u10": 100, "v10": 100, "msl": 10, "pr": 1000}
+SC = {"t2m": 100, "t850": 100, "u10": 100, "v10": 100, "msl": 10, "pr": 1000, "cloud": 10}
 payload = {"steps": STEPS, "lats": [float(x) for x in LATS], "lons": [float(x) for x in LONS],
            "run": run.strftime("%Y-%m-%dT%H:00:00Z"),
            "built": dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),

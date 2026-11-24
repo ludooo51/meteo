@@ -1,6 +1,6 @@
 // Service worker : l'appli s'ouvre même hors connexion avec la dernière prévision téléchargée.
 // Page et données : réseau d'abord (pour avoir la prévision la plus récente), cache sinon.
-var CACHE = "meteo-v5";
+var CACHE = "meteo-v6";
 var SHELL = ["./", "index.html", "coast.json", "manifest.webmanifest", "icon-192.png", "icon-512.png"];
 
 self.addEventListener("install", function (e) {

@@ -5,6 +5,7 @@
 
 ## Fichiers
 - `build_data.py` : choisit le dernier run commun ECMWF/GFS (00 ou 12 UTC), télécharge, écrit `site/data.json` (Int16 base64, grille 0,5°, 65 échéances : 3 h jusqu'à +144 h puis 6 h jusqu'à +240 h). Test rapide : `--max-step 12`.
+- Variables : t2m, t850, u10, v10, msl, pr (mm/h), cloud (%, ECMWF `tcc`, GFS `TCDC entire atmosphere`). Vent affiché en m/s. Symboles météo (soleil/nuages/pluie/neige) et jour par jour calculés dans la page (`sym`, `days`, `sunUp`).
 - `coast.py`, `icons.py` : à relancer seulement si on change la zone ou l'icône (résultats versionnés).
 - `site/` : `index.html` (tout le JS, sans bibliothèque), `sw.js` (hors connexion, réseau d'abord), `manifest.webmanifest`.
 - `.github/workflows/update.yml` : 08:40, 20:40 et 02:20 UTC, régénère et publie sur GitHub Pages.
