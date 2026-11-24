@@ -61,6 +61,16 @@ h2{font-size:15px;font-weight:600;margin:0 0 6px}
 .day .t{font-size:14px;line-height:1.3}
 .day .t small{display:block;color:var(--tx2);font-size:12px}
 .day .x{font-size:12.5px;color:var(--tx2);text-align:right;line-height:1.35;white-space:nowrap}
+.day .d::after{content:" ▾";color:var(--tx2);font-weight:400;font-size:11px}
+.day.open .d::after{content:" ▴"}
+.hrs{background:var(--chip);border-bottom:1px solid var(--bd);padding:2px 6px 6px}
+.hr{display:grid;grid-template-columns:2.8em 1.7em 1fr 3.6em 5.2em;align-items:center;gap:6px;width:100%;padding:5px 0;border:0;border-bottom:1px solid var(--bd);background:none;color:var(--tx);font:inherit;font-size:13.5px;text-align:left;cursor:pointer}
+.hr:last-child{border-bottom:0}
+.hr.on{font-weight:600}
+.hr .i{font-size:19px;line-height:1}
+.hr small{color:var(--tx2);font-size:11.5px}
+.hr .r,.hr .w{text-align:right;white-space:nowrap}
+.hrs .cap{font-size:11.5px;color:var(--tx2);padding:4px 0 2px}
 .sym{font-size:13px;color:var(--tx2);display:block;margin-top:2px}
 #reload{border:1px solid var(--bd);background:var(--chip);color:var(--tx);border-radius:9px;min-height:36px;padding:0 10px;font:inherit;font-size:13px;cursor:pointer}
 </style>
@@ -99,7 +109,7 @@ h2{font-size:15px;font-weight:600;margin:0 0 6px}
   <h2 id="ptitle">Point choisi</h2>
   <div class="scroll" id="cities" style="margin-bottom:8px"></div>
   <div class="vals" id="vals"></div>
-  <h2 style="margin-top:10px">Jour par jour <small class="note" style="font-weight:400">· moyenne ECMWF et GFS · touche un jour pour l'afficher</small></h2>
+  <h2 style="margin-top:10px">Jour par jour <small class="note" style="font-weight:400">· moyenne ECMWF et GFS · touche un jour pour le détail toutes les 3 h</small></h2>
   <div class="days" id="days"></div>
   <canvas id="chart"></canvas>
   <p class="note" style="margin:6px 0 0">Évolution sur 10 jours au point choisi, avec les deux modèles. Trait vertical : échéance affichée.</p>
@@ -453,13 +463,40 @@ function days(){
     else if(r>=0.2)y=cl<80?["🌦️","Quelques gouttes"]:["🌧️","Faible pluie"];
     else y=cl<20?["☀️","Ensoleillé"]:cl<45?["🌤️","Peu nuageux"]:cl<75?["⛅","Éclaircies"]:["☁️","Couvert"];
     var label=h0<nowH&&h1>nowH?"Auj.":fDay.format(new Date(RUN+(h0+12)*3600000));
-    var on=STEPS[state.s]>h0&&STEPS[state.s]<=h1?" on":"";
-    html+='<button class="day'+on+'" data-s="'+acc.mid+'"><span class="d">'+label+'</span><span class="i" aria-hidden="true">'+y[0]+'</span>'+
+    var on=STEPS[state.s]>h0&&STEPS[state.s]<=h1?" on":"",open=openDay===h0;
+    if(open)on+=" open";
+    html+='<button class="day'+on+'" data-s="'+acc.mid+'" data-h="'+h0+'" aria-expanded="'+open+'"><span class="d">'+label+'</span><span class="i" aria-hidden="true">'+y[0]+'</span>'+
       '<span class="t">'+fmt(acc.tmin,0)+'° / <b>'+fmt(acc.tmax,0)+'°</b><small>'+y[1]+'</small></span>'+
       '<span class="x">💧 '+(r<0.1?"0":fmt(r,1))+' mm<br>💨 '+fmt(acc.wmax,0)+' m/s '+dirName(acc.wu,acc.wv)+'</span></button>';
+    if(open)html+=hours(h0,h1,nowH);
   }
   el.innerHTML=html;
-  Array.prototype.forEach.call(el.querySelectorAll(".day"),function(d){d.onclick=function(){setStep(+d.dataset.s);};});
+  Array.prototype.forEach.call(el.querySelectorAll(".day"),function(d){d.onclick=function(){
+    var h=+d.dataset.h;openDay=openDay===h?null:h;setStep(+d.dataset.s);
+  };});
+  Array.prototype.forEach.call(el.querySelectorAll(".hr"),function(d){d.onclick=function(){setStep(+d.dataset.s);};});
+}
+var openDay=null;
+var fHH=new Intl.DateTimeFormat("fr-FR",{timeZone:"Europe/Paris",hour:"2-digit",minute:"2-digit"});
+function hours(h0,h1,nowH){  // détail de la journée à chaque échéance (3 h, ou 6 h au-delà de +144 h)
+  var pt=state.pt,out='<div class="hrs">';
+  for(var s=1;s<NS;s++){
+    var h=STEPS[s];if(h<=h0||h>h1||h<nowH-3)continue;
+    var M={};
+    ["ecmwf","gfs"].forEach(function(m){
+      var u=samp(F[m].u10,s,pt.lon,pt.lat),v=samp(F[m].v10,s,pt.lon,pt.lat);
+      M[m]={t:samp(F[m].t2m,s,pt.lon,pt.lat),c:samp(F[m].cloud,s,pt.lon,pt.lat),r:samp(F[m].pr,s,pt.lon,pt.lat),u:u,v:v,w:Math.hypot(u,v)};
+    });
+    var e=M.ecmwf,g=M.gfs,t=(e.t+g.t)/2,c=(e.c+g.c)/2,r=(e.r+g.r)/2,u=(e.u+g.u)/2,v=(e.v+g.v)/2,w=(e.w+g.w)/2;
+    var dt=h-STEPS[s-1],mm=r*dt,ts=RUN+h*3600000,y=sym(t,c,r,sunUp(ts,pt.lat,pt.lon));
+    out+='<button class="hr'+(s===state.s?' on':'')+'" data-s="'+s+'">'+
+      '<span>'+fHH.format(new Date(ts)).replace(":00"," h")+'</span>'+
+      '<span class="i" aria-hidden="true">'+y[0]+'</span>'+
+      '<span><b>'+fmt(t,0)+'°</b> <small>'+y[1]+' · '+fmt(c,0)+' %<br>E '+fmt(e.t,1)+'° · G '+fmt(g.t,1)+'°</small></span>'+
+      '<span class="r">'+(mm<0.05?'<small>—</small>':'💧'+fmt(mm,1))+'<br><small>'+(mm<0.05?'':'mm/'+dt+' h')+'</small></span>'+
+      '<span class="w">💨 '+fmt(w,0)+' m/s<br><small>'+dirName(u,v)+'</small></span></button>';
+  }
+  return out+'<div class="cap">Heure de fin de chaque période. Pluie : cumul sur la période. Moyenne ECMWF (E) et GFS (G).</div></div>';
 }
 
 function cssVar(n){return getComputedStyle(document.documentElement).getPropertyValue(n).trim();}
