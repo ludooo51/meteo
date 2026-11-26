@@ -21,6 +21,13 @@ LONS = np.arange(-15, 25.01, 0.5)
 ri = np.round((90 - LATS) / 0.25).astype(int)
 ci = np.round((LONS % 360) / 0.25).astype(int) % 1440
 ci_ec = np.round(((LONS - 180) % 360) / 0.25).astype(int) % 1440  # grille ECMWF open data commence à 180° E
+# Monde entier (test) : grille de 2,5°, pas de 6 h jusqu'à +144 h puis 12 h, octets (u8) pour rester léger.
+WLATS = np.arange(90, -90.01, -2.5)
+WLONS = np.arange(-180, 179.99, 2.5)
+WSTEPS = [s for s in STEPS if (s <= 144 and s % 6 == 0) or s % 12 == 0]
+wri = np.round((90 - WLATS) / 0.25).astype(int)
+wci = np.round((WLONS % 360) / 0.25).astype(int) % 1440
+wci_ec = np.round(((WLONS - 180) % 360) / 0.25).astype(int) % 1440
 GFS = "https://noaa-gfs-bdp-pds.s3.amazonaws.com/gfs.%s/%02d/atmos/gfs.t%02dz.pgrb2.0p25.f%03d"
 
 
@@ -51,10 +58,12 @@ log("run choisi :", DATE, "%02d UTC" % HH, "| ECMWF le plus récent :", ec_lates
 
 out = {m: {k: np.zeros((len(STEPS), len(LATS), len(LONS)), dtype=np.float32)
            for k in ["t2m", "t850", "u10", "v10", "msl", "pr", "cloud"]} for m in ("ecmwf", "gfs")}
+WK = ["t2m", "u10", "v10", "msl", "pr", "cloud"]
+wout = {m: {k: np.zeros((len(WSTEPS), len(WLATS), len(WLONS)), dtype=np.float32) for k in WK} for m in ("ecmwf", "gfs")}
 
 
-def sample(vals, cols):
-    return np.asarray(vals, dtype=np.float64).reshape(721, 1440)[np.ix_(ri, cols)]
+def sample(vals, cols, rows=ri):
+    return np.asarray(vals, dtype=np.float64).reshape(721, 1440)[np.ix_(rows, cols)]
 
 
 # --- ECMWF ------------------------------------------------------------------
@@ -64,7 +73,8 @@ c.retrieve(date=DATE, time=HH, type="fc", stream="oper", step=STEPS,
            param="t", levtype="pl", levelist=850, target="ec_pl.grib2")
 log("ECMWF téléchargé")
 
-tp = {}
+tp, tpw = {}, {}
+EKEY = {"2t": "t2m", "10u": "u10", "10v": "v10", "msl": "msl", "tcc": "cloud"}
 for f in ["ec_sfc.grib2", "ec_pl.grib2"]:
     with open(f, "rb") as fh:
         while True:
@@ -74,7 +84,13 @@ for f in ["ec_sfc.grib2", "ec_pl.grib2"]:
             sn, st, lev = (eccodes.codes_get(g, k) for k in ("shortName", "step", "level"))
             if st in STEPS:
                 i = STEPS.index(st)
-                v = sample(eccodes.codes_get_values(g), ci_ec)
+                vals = eccodes.codes_get_values(g)
+                v = sample(vals, ci_ec)
+                if st in WSTEPS and (sn in EKEY or sn == "tp"):
+                    w = sample(vals, wci_ec, wri)
+                    j = WSTEPS.index(st)
+                    if sn == "tp": tpw[st] = w
+                    else: wout["ecmwf"][EKEY[sn]][j] = w - 273.15 if sn == "2t" else w / 100 if sn == "msl" else w
                 if sn == "2t": out["ecmwf"]["t2m"][i] = v - 273.15
                 elif sn == "10u": out["ecmwf"]["u10"][i] = v
                 elif sn == "10v": out["ecmwf"]["v10"][i] = v
@@ -93,6 +109,13 @@ for i, st in enumerate(STEPS):  # tp cumulée -> mm/h
     cur = tp.get(st, prev)
     if i > 0 and prev is not None and cur is not None:
         out["ecmwf"]["pr"][i] = np.maximum(cur - prev, 0) * 1000 / (st - STEPS[i - 1])
+    prev = cur
+# pluie monde : cumul entre deux échéances du monde -> mm/h
+prev = None
+for j, st in enumerate(WSTEPS):
+    cur = tpw.get(st, prev)
+    if j > 0 and prev is not None and cur is not None:
+        wout["ecmwf"]["pr"][j] = np.maximum(cur - prev, 0) * 1000 / (st - WSTEPS[j - 1])
     prev = cur
 log("ECMWF lu ; échéances de pluie :", len(tp))
 
@@ -120,7 +143,10 @@ def do_step(st):
                 a = int(l.split(":")[1])
                 b = int(idx[j + 1].split(":")[1]) - 1 if j + 1 < len(idx) else ""
                 g = eccodes.codes_new_from_message(fetch(base, {"Range": "bytes=%d-%s" % (a, b)}))
-                res[k] = sample(eccodes.codes_get_values(g), ci)
+                vals = eccodes.codes_get_values(g)
+                res[k] = sample(vals, ci)
+                if st in WSTEPS and k in WK:
+                    res["w_" + k] = sample(vals, wci, wri)
                 eccodes.codes_release(g)
                 break
     return st, res
@@ -130,12 +156,17 @@ with cf.ThreadPoolExecutor(8) as ex:
     for st, res in ex.map(do_step, STEPS):
         i = STEPS.index(st)
         for k, v in res.items():
+            if k.startswith("w_"):
+                k = k[2:]
+                wout["gfs"][k][WSTEPS.index(st)] = v - 273.15 if k == "t2m" else v / 100 if k == "msl" else v * 3600 if k == "pr" else v
+                continue
             out["gfs"][k][i] = v - 273.15 if k in ("t2m", "t850") else v / 100 if k == "msl" else v * 3600 if k == "pr" else v
-for m in out:  # nébulosité en % (ECMWF peut être en fraction 0-1) ; GFS peut manquer à +0
-    cl = out[m]["cloud"]
+for W_ in (out, wout):
+  for m in W_:  # nébulosité en % (ECMWF peut être en fraction 0-1) ; GFS peut manquer à +0
+    cl = W_[m]["cloud"]
     if cl.max() <= 1.01:
         cl *= 100
-    if len(STEPS) > 1 and not cl[0].any():
+    if len(cl) > 1 and not cl[0].any():
         cl[0] = cl[1]
 log("GFS lu")
 
@@ -153,6 +184,18 @@ tmp = args.out + ".tmp"
 with open(tmp, "w") as fh:
     json.dump(payload, fh, separators=(",", ":"))
 os.replace(tmp, args.out)
+# monde : un octet par valeur, valeur = off + octet / sc
+WSC = {"t2m": (-70, 2), "u10": (-51, 2.5), "v10": (-51, 2.5), "msl": (930, 2), "pr": (0, 10), "cloud": (0, 2.5)}
+wpay = {"steps": WSTEPS, "lats": [float(x) for x in WLATS], "lons": [float(x) for x in WLONS],
+        "run": payload["run"], "built": payload["built"], "u8": WSC, "data": {}}
+for m in wout:
+    wpay["data"][m] = {k: base64.b64encode(np.clip(np.round((a - WSC[k][0]) * WSC[k][1]), 0, 255).astype("u1").tobytes()).decode()
+                       for k, a in wout[m].items()}
+wpath = os.path.join(os.path.dirname(os.path.abspath(args.out)), "world.json")
+with open(wpath + ".tmp", "w") as fh:
+    json.dump(wpay, fh, separators=(",", ":"))
+os.replace(wpath + ".tmp", wpath)
+log("écrit :", wpath, round(os.path.getsize(wpath) / 1e6, 1), "Mo")
 for m in out:
     for k, a in out[m].items():
         log(m, k, round(float(a.min()), 2), round(float(a.max()), 2))
