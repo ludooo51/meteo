@@ -1,0 +1,32 @@
+# Vérification sur un an (ECMWF / GFS contre la station) et correction locale : chaque lundi, ou à la demande.
+name: Vérification et correction
+
+on:
+  schedule:
+    - cron: "17 5 * * 1"
+  workflow_dispatch:
+  push:
+    branches: [claude/phone-app-3h-updates-5vm4of]
+    paths: [verify.py, .github/workflows/verify.yml]
+
+permissions:
+  contents: write
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install numpy pandas
+      - run: python verify.py --days 365
+      - name: Enregistrer le bilan
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898283+github-actions[bot]@users.noreply.github.com"
+          git add VERIF.md site/correction.json
+          git commit -m "Vérification sur un an et correction locale" || exit 0
+          git pull --rebase && git push
